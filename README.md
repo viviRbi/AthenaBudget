@@ -1,8 +1,8 @@
-***ATHENA BUDGET***
+## ATHENA BUDGET
 
 *Budget Approval System for a Large Multi-national Sales Organization.*
 
-**Description**
+***Description***
 
 Athena Budget is a secure and scalable budget approval platform designed for a large multi-national sales organization with thousands of employees across multiple regions. It centralizes and streamlines budget request and approval workflows within the company, supporting multi-level hierarchical approvals (L1 to L3) and a 24-hour rollback window for flexible decision management.
 
@@ -10,7 +10,7 @@ Sales employees submit budget requests via a React Native mobile app featuring b
 
 Built on a microservices architecture, Athena Budget leverages Kafka for event-driven communication and mTLS for secure inter-service authentication. Notifications are sent through push (Firebase Cloud Messaging), email (AWS SES), and SMS (Twilio) channels. The system is containerized with Docker and orchestrated using Kubernetes, providing a robust, modern solution tailored to the complex needs of a global sales enterprise.
 
-**Services**
+***Services***
 
 **User Service**
 Responsibilities: Login, register, manage roles, departments.
@@ -35,6 +35,8 @@ POST   /api/v1/requests                   // Create new budget request (locked a
 GET    /api/v1/requests                   // List my requests
 GET    /api/v1/requests/{id}             // View specific request
 GET    /api/v1/requests/{id}/status      // View status history
+POST   /api/v1/requests/sync             //batch upsert for this user for mobile sync logic
+GET    /api/v1/requests/updates?lastSync=ISO8601Timestamp // update data from backend for this user
 ```
 
 **Approval Service**
@@ -45,6 +47,8 @@ POST   /api/v1/approvals/{id}/approve    // Approve a budget request
 POST   /api/v1/approvals/{id}/reject     // Reject a request
 POST   /api/v1/approvals/{id}/rollback   // Rollback approval (within 24h)
 GET    /api/v1/approvals/history         // View my approval actions
+POST   /api/v1/approvals/sync             //batch upsert for this user for mobile sync logic
+GET    /api/v1/approvals/updates?lastSync=ISO8601Timestamp // update data from backend for this user for mobile sync logic
 ```
 
 **Admin Portal Service**
@@ -81,15 +85,15 @@ GET    /api/v1/notify/status/{id}        // Check notification delivery status
 Most notification endpoints are internal — they respond to events, not user calls.
 ```
 
-**Securing API**
-Use JWT bearer tokens (OAuth2 or Firebase).
+**Note for Security**
 
-Each microservice validates JWT locally or via shared JWKS.
+- Use JWT bearer tokens (OAuth2 or Firebase).
+- Each microservice validates JWT locally or via shared JWKS.
+- Each microservices secures service-to-service channel	with mTLS
+- API Gateway can enforce route-level roles (e.g., role: admin).
 
-API Gateway can enforce route-level roles (e.g., role: admin).
 
-
-**Tech Stack**
+***Tech Stack***
 ```
 Layer:	Technology / Tool
 Frontend:	React (Web Portal), React Native (Mobile App)
@@ -147,6 +151,57 @@ Internal Communication:
                            |                             |
                     [PostgreSQL DBs]               [Redis (cache/session)]
               (One DB per service or shared schema)     (Optional, for token/session caching)
+```
+
+**React Web App**
+
+Technology / Library | Purpose / Description
+-- | --
+React | UI library
+Redux Toolkit | Centralized state management (recommended for complex state)
+React Query (optional) | Server state/data fetching & caching
+React Router | Client-side routing
+Axios | HTTP requests
+Tailwind CSS | Utility-first CSS framework for styling
+PostCSS	Tailwind requires | PostCSS for processing CSS
+Jest + React Testing Library | Unit and integration testing of components
+React Hook Form / Formik | Form state management and validation
+
+**React Native for Mobile App**
+
+Offline + State Management
+
+Feature	Technology / Library | Notes
+-- | --
+Mobile Framework | React Native | Cross-platform iOS & Android development
+Local Database (Offline Support) | Realm | Popular, powerful offline-first DB
+State Management | Redux Toolkit | Industry standard, scalable global state
+Async Middleware | Redux Thunk or Redux Saga | Manage async actions and side effects
+Connectivity Detection | react-native-offline | Handle online/offline status & sync logic
+Networking / API Calls | Axios | Promise-based HTTP client
+Type Checking | TypeScript | Strongly recommended for better code quality
+Form Handling | React Hook Form | Manage forms easily
+Navigation | React Navigation | Standard navigation library for React Native
+Styling | Tailwind CSS (via Tailwind RN or NativeWind) | Utility-first styling with Tailwind syntax
+Testing | Jest + React Native Testing Library | Unit and integration testing
+
+```
+[User updates data locally] 
+       ↓ 
+[Change recorded in local DB + queued for sync] 
+       ↓ 
+[App detects online status] 
+       ↓ 
+[Process queued changes → send to backend API] 
+       ↓ 
+[Backend processes and confirms] 
+       ↓ 
+[Update local DB sync status] 
+       ↓ 
+[Fetch updates from backend to local DB] 
+       ↓ 
+[Merge and update local data]
+
 ```
 
 **Testing**
