@@ -89,7 +89,7 @@ Most notification endpoints are internal — they respond to events, not user ca
 
 - Use JWT bearer tokens (OAuth2 or Firebase).
 - Each microservice validates JWT locally or via shared JWKS.
-- Each microservices secures service-to-service channel	with mTLS
+- Each microservices secures service-to-service channel	with mTLS (self-signed CA, a server certificate, and a client certificate)
 - API Gateway can enforce route-level roles (e.g., role: admin).
 
 
@@ -146,12 +146,17 @@ Monitoring & Logging:	Prometheus, Grafana, ELK Stack / CloudWatch
 Internal Communication:
 - All microservices use **mTLS**
 - Client communication uses **JWT (OAuth2)**
+- External Services 
 
                            +-----------------------------+
                            |                             |
                     [PostgreSQL DBs]               [Redis (cache/session)]
               (One DB per service or shared schema)     (Optional, for token/session caching)
 ```
+
+**Java Backend**
+
+
 
 **React Web App**
 
@@ -294,75 +299,105 @@ Testing | Jest + React Native Testing Library | Unit and integration testing
 - Triggers automated integration and deployment tests in staging environment.
 ```
 
-**AWS**
+Staging and Prod
+Layer | Staging	Production
+-- | --
+Kubernetes Namespace | staging | production
+mTLS Certificates | Kubernetes Secrets scoped to staging | Kubernetes Secrets scoped to prod
+AWS Resources | Separate RDS, S3 buckets, Secrets | Separate RDS, S3 buckets, Secrets
+Load Balancer | ALB or Ingress for staging domain | ALB or Ingress for prod domain
+Terraform State (optional) | Separate state file or workspace | Separate state file or workspace
+
+mTLS
+Service Type | Where to Add mTLS Certificate / Key
+-- | --
+Internal services (microservice-to-microservice) | Store cert/key in Kubernetes Secrets and mount them into each microservice pod. Services use these to authenticate each other over mTLS.
+External-facing services (client-to-service, e.g. React app → API) | Store cert/key in Ingress Controller or Load Balancer (e.g., Kubernetes Secret for Ingress, or AWS ACM for ALB) | This is where TLS/mTLS handshake with clients happens.
 
 ```
-                                +--------------------------+
-                                |       React Native App    |
-                                |  (Mobile, biometric auth) |
-                                +-------------+------------+
-                                              |
-                                +-------------|------------+
-                                |      React Web Portal     |
-                                +-------------+------------+
-                                              |
-                               HTTPS (JWT OAuth2 / OpenID Connect)
-                                              |
-                                +-------------v------------+
-                                |    Elastic Load Balancer  |  <-- ALB with SSL cert from ACM
-                                +-------------+------------+
-                                              |
-                                +-------------v------------+
-                                |    Amazon ECS / EKS       |  <-- Backend microservices containerized with Docker
-                                |  (API Gateway / BFF +     |
-                                |   User, Budget, Approval, |
-                                |   Notification, Admin)    |
-                                +------+------+-------------+
-                                       |      |
-         +-----------------------------+      +-----------------------------+
-         |                                                            |
-+--------v---------+                                        +---------v--------+
-| Amazon RDS       |                                        | AWS Secrets      |
-| PostgreSQL       |                                        | Manager / SSM    |
-| (Per service DB) |                                        | (Store JWT keys, |
-+------------------+                                        | DB credentials)  |
-                                                            +-----------------+
+                 +--------------------------+
+                 |    React Native App      |
+                 |  (Mobile, biometric auth)|
+                 +-------------+------------+
+                               |
+                 +-------------|------------+
+                 |     React Web Portal      |
+                 +-------------+------------+
+                               |
+            HTTPS (JWT OAuth2 / OpenID Connect via Cognito or Auth0)
+                               |
+                 +-------------v------------+
+                 | Elastic Load Balancer (ALB) |
+                 | (SSL cert from AWS ACM)   |
+                 +-------------+------------+
+                               |
+              +----------------+----------------+
+              |                                 |
+    +---------v----------+           +----------v----------+
+    |    Staging ECS/EKS |           |    Production ECS/EKS|
+    |  (API Gateway/BFF, |           |  (API Gateway/BFF,  |
+    |   User, Budget,    |           |   User, Budget,     |
+    |   Approval, etc.)  |           |   Approval, etc.)   |
+    +---------+----------+           +----------+----------+
+              |                                 |
+     +--------+---------+               +-------+--------+
+     | IAM Roles (fine  |               | IAM Roles (fine |
+     | grained access   |               | grained access  |
+     | per service &    |               | per service &   |
+     | environment)     |               | environment)    |
+     +--------+---------+               +-------+--------+
+              |                                 |
+   +----------v-----------+           +---------v----------+
+   | RDS PostgreSQL (staging)|         | RDS PostgreSQL (prod)|
+   | (Separate DB instance)   |         | (Separate DB instance)|
+   +-------------------------+         +----------------------+
+               |                                 |
+   +-----------v-----------+           +---------v----------+
+   | Secrets Manager / SSM  |           | Secrets Manager / SSM|
+   | (Store DB creds, JWT   |           | (Store DB creds, JWT |
+   | keys, mTLS certs)      |           | keys, mTLS certs)    |
+   +------------------------+          +----------------------+
 
                |
-               +-------------------------------+
-               |                               |
-       +-------v--------+              +-------v--------+
-       | Kafka Cluster  | (Optional)   | Redis Cache    | (Optional)
-       +----------------+             +----------------+
+     +---------v---------+
+     | Kafka Cluster     | (Optional, shared or separate)
+     +-------------------+
 
                |
-+--------------v-----------------+
-| Notification System (Push)     |
-| Firebase Cloud Messaging (FCM) |
-| + AWS SES (Email)              |
-| + Twilio (SMS)                 |
-+-------------------------------+
+     +---------v---------+
+     | Redis Cache       | (Optional)
+     +-------------------+
 
-              |
-+-------------v---------------+
-| Monitoring & Logging        |
-| Amazon CloudWatch           |
-+----------------------------+
+               |
+     +---------v--------------------------------+
+     | Notification System                      |
+     | - Firebase Cloud Messaging (mobile app)  |
+     | - AWS SES (Email)                        |
+     | - Twilio (SMS)                           |
+     +------------------------------------------+
 
-              ^
-              |
-              |
-      +-------v---------+
-      |     Jenkins     |  <-- CI/CD Pipeline: Build, Test, Dockerize, Push to ECR, Deploy to ECS/EKS
-      +-----------------+
+               |
+     +---------v---------+
+     | CloudWatch Logs   |
+     | Metrics & Alerts  |
+     +-------------------+
 
+               ^
+               |
+     +---------v----------+
+     | Jenkins CI/CD      |
+     | - Build/Test       |
+     | - Dockerize        |
+     | - Push to ECR      |
+     | - Deploy to ECS/EKS|
+     +--------------------+
 ```
 
 - Frontend Apps (React Native & React Web) communicate over HTTPS secured with JWT tokens issued by authentication system (can be a service integrated or AWS Cognito or Keycloak externally).
 
 - Incoming client traffic hits the ALB (Application Load Balancer), which routes requests securely (TLS via ACM cert).
 
-ALB forwards traffic to the microservices running in Amazon ECS with Fargate or Amazon EKS cluster for Kubernetes skills demonstration.
+- ALB forwards traffic to the microservices running in Amazon ECS with Fargate or Amazon EKS cluster for Kubernetes skills demonstration.
 
 - Each microservice uses its own PostgreSQL database managed by Amazon RDS.
 
@@ -375,6 +410,12 @@ ALB forwards traffic to the microservices running in Amazon ECS with Fargate or 
 - CloudWatch monitors logs, metrics, and alerts for the whole system.
 
 - CI/CD (not shown in diagram) runs on GitHub Actions pushing Docker images to ECR and deploying to ECS/EKS.
+
+Communication | TLS Cert Location | Storage/Injection
+-- | -- | --
+External client → ALB | AWS Certificate Manager (ACM) | Attached to ALB
+ALB → Backend microservice | Standard TLS certs on services | Kubernetes Secrets / ECS Secrets
+Microservice → Microservice (mTLS) | Mutual TLS certs (client, CA, key) stored securely | AWS Secrets Manager → Kubernetes Secrets or ECS task secrets
 
 ***Post-AWS Deployment: Laptop-Based High Availability Setup with Kubernetes***
 
@@ -391,7 +432,7 @@ After decommissioning AWS services, the system can be deployed locally on a lapt
 - Kafka (Event Bus):	 Docker container of bitnami/kafka or confluentinc/cp-kafka
 - Redis (Optional):	 Docker container (for caching, token session store, etc.)
 
-***Optiona Note***
+***Considerations***
 
 Security Risks & Mitigations
 Risk | Threat	Mitigation Strategy
@@ -439,3 +480,5 @@ Ingress Controller Crash | Auto-heal via replica count >1. Use readiness probes.
 JWT Key Rotation Issue | Keep JWKS key cache with short TTL. Sync key rotation through CI/CD pipelines and notify all services of changes.
 
 Optional: Periodic backups of DBs, audit logs, and Kafka topics to offsite storage (e.g., S3 or local volumes).
+
+
