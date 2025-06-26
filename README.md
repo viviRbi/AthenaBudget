@@ -106,9 +106,9 @@ Caching & Session:	Redis (optional for caching/session storage)
 Notifications:	Firebase Cloud Messaging (Push), AWS SES (Email), Twilio (SMS)
 Containerization:	Docker
 Orchestration:	Kubernetes
-CI/CD:	GitHub Actions / Jenkins / GitLab CI
+CI/CD:	Jenkins
 Cloud (may terminate all services right after project completed):	AWS
-Monitoring & Logging:	Prometheus, Grafana, ELK Stack / CloudWatch
+Monitoring & Logging:	Prometheus, Grafana
 ```
 
 **Tech Stack Diagram**
